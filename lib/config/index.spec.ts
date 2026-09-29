@@ -36,6 +36,70 @@ describe('config/index', () => {
       });
     });
 
+    it('overlays enabled false onto the default dependabot vulnerabilityAlerts entry', () => {
+      const parentConfig = {
+        vulnerabilityAlerts: [
+          {
+            vulnerabilityType: 'dependabot',
+            groupName: null,
+            prConcurrentLimit: 0,
+          },
+        ],
+      };
+      const childConfig = {
+        vulnerabilityAlerts: [
+          { vulnerabilityType: 'dependabot', enabled: false },
+        ],
+      };
+      const config = mergeChildConfig(parentConfig, childConfig);
+      expect(config.vulnerabilityAlerts).toEqual([
+        {
+          vulnerabilityType: 'dependabot',
+          groupName: null,
+          prConcurrentLimit: 0,
+          enabled: false,
+        },
+      ]);
+    });
+
+    it('merges osv-offline entries after filling the omitted host and appends a new host', () => {
+      const parentConfig = {
+        vulnerabilityAlerts: [
+          { vulnerabilityType: 'dependabot', prConcurrentLimit: 0 },
+          { vulnerabilityType: 'osv-offline', labels: ['security'] },
+        ],
+      };
+      const childConfig = {
+        vulnerabilityAlerts: [
+          {
+            vulnerabilityType: 'osv-offline',
+            vulnerabilityHost:
+              'https://github.com/renovatebot/osv-offline/releases/latest/download/osv-offline.zip',
+            enabled: false,
+          },
+          {
+            vulnerabilityType: 'osv',
+            vulnerabilityHost: 'https://osv.custom.com',
+          },
+        ],
+      };
+      const config = mergeChildConfig(parentConfig, childConfig);
+      expect(config.vulnerabilityAlerts).toEqual([
+        { vulnerabilityType: 'dependabot', prConcurrentLimit: 0 },
+        {
+          vulnerabilityType: 'osv-offline',
+          vulnerabilityHost:
+            'https://github.com/renovatebot/osv-offline/releases/latest/download/osv-offline.zip',
+          labels: ['security'],
+          enabled: false,
+        },
+        {
+          vulnerabilityType: 'osv',
+          vulnerabilityHost: 'https://osv.custom.com',
+        },
+      ]);
+    });
+
     it('merges packageRules', () => {
       const parentConfig = { ...defaultConfig };
       Object.assign(parentConfig, {

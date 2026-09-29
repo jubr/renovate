@@ -1,5 +1,8 @@
 import type { Osv } from '@renovatebot/osv-offline';
-import type { RenovateConfig } from '../../../config/types.ts';
+import type {
+  RenovateConfig,
+  VulnerabilityAlertEntry,
+} from '../../../config/types.ts';
 import type { PackageFile } from '../../../modules/manager/types.ts';
 import type { VersioningApi } from '../../../modules/versioning/index.ts';
 
@@ -13,6 +16,7 @@ export interface Vulnerability {
   datasource: string;
   vulnerability: Osv.Vulnerability;
   affected: Osv.Affected;
+  alertEntry?: VulnerabilityAlertEntry;
 }
 
 export interface DependencyVulnerabilities {

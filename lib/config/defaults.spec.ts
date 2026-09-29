@@ -4,9 +4,12 @@ import type { RenovateOptions } from './types.ts';
 describe('config/defaults', () => {
   describe('getConfig()', () => {
     it('leaves the vulnerabilityAlerts concurrent limit unlimited', () => {
-      expect(getConfig().vulnerabilityAlerts).toMatchObject({
-        prConcurrentLimit: 0,
-      });
+      expect(getConfig().vulnerabilityAlerts).toEqual([
+        expect.objectContaining({
+          vulnerabilityType: 'dependabot',
+          prConcurrentLimit: 0,
+        }),
+      ]);
     });
   });
 

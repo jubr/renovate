@@ -3,7 +3,6 @@ import {
   isNonEmptyObject,
   isNonEmptyString,
   isNullOrUndefined,
-  isTruthy,
 } from '@sindresorhus/is';
 import { DateTime } from 'luxon';
 import { GlobalConfig } from '../../config/global.ts';
@@ -20,6 +19,10 @@ import type { BranchConfig, SelectAllConfig } from '../types.ts';
 import { extractRepoProblems, replacementAlreadyExists } from './common.ts';
 import type { ConfigMigrationResult } from './config-migration/index.ts';
 import { getDepWarningsDashboard } from './errors-warnings.ts';
+import {
+  normalizeVulnerabilityAlertEntries,
+  normalizeVulnerabilityAlerts,
+} from './extract/vulnerability-alerts.ts';
 import { PackageFiles } from './package-files.ts';
 import type { Vulnerability } from './process/types.ts';
 import { Vulnerabilities } from './process/vulnerabilities.ts';
@@ -781,7 +784,15 @@ export async function getDashboardMarkdownVulnerabilities(
 
   let vulnerabilities: Vulnerability[];
   try {
-    const vulnerabilityFetcher = await Vulnerabilities.create();
+    const offlineDatabase = normalizeVulnerabilityAlertEntries(
+      config.vulnerabilityAlerts,
+    ).find(
+      (entry) =>
+        entry.vulnerabilityType === 'osv-offline' && entry.enabled !== false,
+    );
+    const vulnerabilityFetcher = await Vulnerabilities.create(
+      offlineDatabase?.vulnerabilityHost,
+    );
     vulnerabilities = await vulnerabilityFetcher.fetchVulnerabilities(
       config,
       packageFiles,
@@ -807,10 +818,10 @@ export async function getDashboardMarkdownVulnerabilities(
 
   result += emojify('> :exclamation: **Important**\n> \n');
   result += `> \`${resolvedVulnerabilitiesLength}\`/\`${vulnerabilities.length}\``;
-  if (isTruthy(config.osvVulnerabilityAlerts)) {
+  if (osvVulnerabilityFixesEnabled(config)) {
     result += ' CVEs have Renovate fixes.\n\n';
   } else {
-    result += ` CVEs have possible Renovate fixes.\n> See [\`osvVulnerabilityAlerts\`](${GlobalConfig.get('productLinks').documentation}configuration-options/#osvvulnerabilityalerts) to allow Renovate to supply fixes.\n\n`;
+    result += ` CVEs have possible Renovate fixes.\n> See [\`vulnerabilityAlerts\`](${GlobalConfig.get('productLinks').documentation}configuration-options/#vulnerabilityalerts) to allow Renovate to supply fixes.\n\n`;
   }
 
   let renderedVulnerabilities: Vulnerability[];
@@ -870,4 +881,17 @@ export async function getDashboardMarkdownVulnerabilities(
   }
 
   return result;
+}
+
+function osvVulnerabilityFixesEnabled(config: RenovateConfig): boolean {
+  const entries = normalizeVulnerabilityAlerts(config).vulnerabilityAlerts;
+  if (!isNonEmptyArray(entries)) {
+    return false;
+  }
+  return entries.some(
+    (entry) =>
+      entry.enabled !== false &&
+      (entry.vulnerabilityType === 'osv' ||
+        entry.vulnerabilityType === 'osv-offline'),
+  );
 }

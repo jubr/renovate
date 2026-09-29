@@ -2288,7 +2288,7 @@ None detected
       const heading =
         '## Vulnerabilities\n\n> ❗ **Important**\n> \n' +
         '> `1`/`2` CVEs have possible Renovate fixes.\n' +
-        '> See [`osvVulnerabilityAlerts`](https://docs.renovatebot.com/configuration-options/#osvvulnerabilityalerts) to allow Renovate to supply fixes.\n\n';
+        '> See [`vulnerabilityAlerts`](https://docs.renovatebot.com/configuration-options/#vulnerabilityalerts) to allow Renovate to supply fixes.\n\n';
 
       const result = await getDashboardMarkdownVulnerabilities(
         {
@@ -2306,6 +2306,37 @@ None detected
       // the vulnerability with a fixed version is left out
       expect(result).not.toContain('express');
       expect(result).not.toContain('GHSA-29mw-wpgm-hmr9');
+    });
+
+    it('treats an empty vulnerabilityAlerts array as fixes disabled', async () => {
+      const fetchVulnerabilitiesMock = vi.fn();
+      createVulnerabilitiesMock.mockResolvedValueOnce({
+        fetchVulnerabilities: fetchVulnerabilitiesMock,
+      });
+      fetchVulnerabilitiesMock.mockResolvedValueOnce([
+        {
+          packageName: 'cookie-parser',
+          depVersion: '1.4.6',
+          packageFileConfig: {
+            manager: 'npm',
+          },
+          vulnerability: {
+            id: 'GHSA-35jh-r3h4-6jhm',
+          },
+        },
+      ]);
+
+      const result = await getDashboardMarkdownVulnerabilities(
+        {
+          ...config,
+          dependencyDashboardOSVVulnerabilitySummary: 'all',
+          vulnerabilityAlerts: [],
+        },
+        packageFiles,
+      );
+
+      expect(result).toContain('CVEs have possible Renovate fixes');
+      expect(result).toContain('configuration-options/#vulnerabilityalerts');
     });
 
     it('returns a fallback message instead of throwing when the OSV database is unavailable', async () => {

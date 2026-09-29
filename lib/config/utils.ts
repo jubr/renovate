@@ -1,8 +1,12 @@
 import { logger } from '../logger/index.ts';
 import { clone } from '../util/clone.ts';
 import { getHighestVulnerabilitySeverity } from '../util/vulnerability/utils.ts';
+import {
+  normalizeVulnerabilityAlertEntries,
+  vulnerabilityAlertMergeKey,
+} from '../workers/repository/extract/vulnerability-alerts.ts';
 import * as options from './options/index.ts';
-import type { RenovateConfig } from './types.ts';
+import type { RenovateConfig, VulnerabilityAlertEntry } from './types.ts';
 
 export function mergeChildConfig<
   T extends Record<string, any>,
@@ -37,6 +41,11 @@ export function mergeChildConfig<
           ...parentConfig[option.name],
           ...childConfig[option.name],
         };
+      } else if (option.name === 'vulnerabilityAlerts') {
+        config[option.name] = mergeVulnerabilityAlertEntries(
+          parentConfig[option.name],
+          childConfig[option.name],
+        );
       } else if (option.type === 'array') {
         config[option.name] = (parentConfig[option.name] as unknown[]).concat(
           config[option.name],
@@ -54,4 +63,23 @@ export function mergeChildConfig<
     }
   }
   return { ...config, ...config.force };
+}
+
+function mergeVulnerabilityAlertEntries(
+  parent: unknown,
+  child: unknown,
+): VulnerabilityAlertEntry[] {
+  const merged = normalizeVulnerabilityAlertEntries(parent);
+  for (const childEntry of normalizeVulnerabilityAlertEntries(child)) {
+    const key = vulnerabilityAlertMergeKey(childEntry);
+    const index = merged.findIndex(
+      (entry) => vulnerabilityAlertMergeKey(entry) === key,
+    );
+    if (index === -1) {
+      merged.push(childEntry);
+      continue;
+    }
+    merged[index] = mergeChildConfig(merged[index], childEntry);
+  }
+  return merged;
 }

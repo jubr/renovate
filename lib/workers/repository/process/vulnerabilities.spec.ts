@@ -2,11 +2,14 @@ import type { Osv, OsvOffline } from '@renovatebot/osv-offline';
 import { codeBlock } from 'common-tags';
 import { DateTime } from 'luxon';
 import { mockFn } from 'vitest-mock-extended';
+import * as httpMock from '~test/http-mock.ts';
 import { type RenovateConfig, logger, partial } from '~test/util.ts';
 import { getConfig } from '../../../config/defaults.ts';
+import { GlobalConfig } from '../../../config/global.ts';
 import type { PackageRuleInputConfig } from '../../../config/types.ts';
 import { MavenDatasource } from '../../../modules/datasource/maven/index.ts';
 import type { PackageFile } from '../../../modules/manager/types.ts';
+import * as hostRules from '../../../util/host-rules.ts';
 import { applyPackageRules } from '../../../util/package-rules/index.ts';
 import { Result } from '../../../util/result.ts';
 import { asTimestamp } from '../../../util/timestamp.ts';
@@ -27,8 +30,8 @@ vi.mock('@renovatebot/osv-offline', () => {
   return {
     __esModule: true,
     OsvOffline: class {
-      static create() {
-        return createMock();
+      static create(...args: unknown[]) {
+        return createMock(...args);
       }
     },
   };
@@ -45,6 +48,44 @@ describe('workers/repository/process/vulnerabilities', () => {
       await expect(Vulnerabilities.create()).resolves.not.toThrow();
       await expect(Vulnerabilities.create()).resolves.not.toThrow();
       expect(createMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears a temporary database URL when none was set', async () => {
+      vi.stubEnv('OSV_OFFLINE_DATABASE_URL', undefined);
+      createMock.mockResolvedValue({
+        getVulnerabilities: getVulnerabilitiesMock,
+      });
+
+      await Vulnerabilities.create('https://example.invalid/osv-offline.zip');
+
+      expect(process.env.OSV_OFFLINE_DATABASE_URL).toBeUndefined();
+    });
+
+    it('passes the resolved zip URL into OsvOffline.create', async () => {
+      const databaseUrl =
+        'https://github.com/renovatebot/osv-offline/releases/latest/download/osv-offline.zip';
+      const previousDisable = process.env.OSV_OFFLINE_DISABLE_DOWNLOAD;
+      const previousDatabaseUrl = 'https://example.invalid/previous.zip';
+      vi.stubEnv('OSV_OFFLINE_DISABLE_DOWNLOAD', undefined);
+      vi.stubEnv('OSV_OFFLINE_DATABASE_URL', previousDatabaseUrl);
+      createMock.mockImplementation(() => {
+        expect(process.env.OSV_OFFLINE_DISABLE_DOWNLOAD).toBeUndefined();
+        expect(process.env.OSV_OFFLINE_DATABASE_URL).toBe(databaseUrl);
+        return { getVulnerabilities: getVulnerabilitiesMock };
+      });
+
+      try {
+        await Vulnerabilities.create(databaseUrl);
+        expect(createMock).toHaveBeenCalledWith(databaseUrl);
+        expect(process.env.OSV_OFFLINE_DISABLE_DOWNLOAD).toBeUndefined();
+        expect(process.env.OSV_OFFLINE_DATABASE_URL).toBe(previousDatabaseUrl);
+      } finally {
+        if (previousDisable === undefined) {
+          vi.stubEnv('OSV_OFFLINE_DISABLE_DOWNLOAD', undefined);
+        } else {
+          vi.stubEnv('OSV_OFFLINE_DISABLE_DOWNLOAD', previousDisable);
+        }
+      }
     });
 
     it('throws when osv-offline error', async () => {
@@ -69,6 +110,300 @@ describe('workers/repository/process/vulnerabilities', () => {
     beforeEach(() => {
       config = getConfig();
       config.packageRules = [];
+    });
+
+    it('posts osv queries to vulnerabilityHost /v1/query', async () => {
+      config.vulnerabilityAlerts = [
+        {
+          vulnerabilityType: 'osv',
+          vulnerabilityHost: 'https://api.osv.dev',
+        },
+      ];
+      httpMock
+        .scope('https://api.osv.dev')
+        .post('/v1/query', {
+          package: { name: 'django', ecosystem: 'PyPI' },
+        })
+        .reply(200, { vulns: [] });
+
+      const found = await vulnerabilities.fetchVulnerabilities(config, {
+        poetry: [
+          {
+            deps: [
+              {
+                depName: 'django',
+                packageName: 'django',
+                currentValue: '3.2',
+                datasource: 'pypi',
+              },
+            ],
+            packageFile: 'some-file',
+          },
+        ],
+      });
+
+      expect(found).toEqual([]);
+    });
+
+    it('sends hostRules headers on the osv query', async () => {
+      GlobalConfig.set({ allowedHeaders: ['X-*'] });
+      hostRules.add({
+        matchHost: 'https://api.osv.dev',
+        headers: { 'x-abc': 'token' },
+      });
+      config.vulnerabilityAlerts = [
+        {
+          vulnerabilityType: 'osv',
+          vulnerabilityHost: 'https://api.osv.dev',
+        },
+      ];
+      httpMock
+        .scope('https://api.osv.dev')
+        .post('/v1/query')
+        .matchHeader('x-abc', 'token')
+        .reply(200, { vulns: [] });
+
+      try {
+        const found = await vulnerabilities.fetchVulnerabilities(config, {
+          poetry: [
+            {
+              deps: [
+                {
+                  depName: 'django',
+                  packageName: 'django',
+                  currentValue: '3.2',
+                  datasource: 'pypi',
+                },
+              ],
+              packageFile: 'some-file',
+            },
+          ],
+        });
+        expect(found).toEqual([]);
+      } finally {
+        hostRules.clear();
+        GlobalConfig.reset();
+      }
+    });
+
+    it('keeps vulnerabilities from a later osv host when an earlier host fails', async () => {
+      config.vulnerabilityAlerts = [
+        {
+          vulnerabilityType: 'osv',
+          vulnerabilityHost: 'https://osv.fail.test',
+        },
+        {
+          vulnerabilityType: 'osv',
+          vulnerabilityHost: 'https://api.osv.dev',
+        },
+      ];
+      httpMock.scope('https://osv.fail.test').post('/v1/query').reply(500);
+      httpMock
+        .scope('https://api.osv.dev')
+        .post('/v1/query')
+        .reply(200, {
+          vulns: [
+            {
+              id: 'PYSEC-keep',
+              modified: '',
+              affected: [
+                {
+                  package: { name: 'django', ecosystem: 'PyPI' },
+                  ranges: [
+                    {
+                      type: 'ECOSYSTEM',
+                      events: [{ introduced: '0' }, { fixed: '3.2.16' }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        });
+
+      const found = await vulnerabilities.fetchVulnerabilities(config, {
+        poetry: [
+          {
+            deps: [
+              {
+                depName: 'django',
+                packageName: 'django',
+                currentValue: '3.2',
+                datasource: 'pypi',
+              },
+            ],
+            packageFile: 'some-file',
+          },
+        ],
+      });
+
+      expect(found.map((vuln) => vuln.vulnerability.id)).toEqual([
+        'PYSEC-keep',
+      ]);
+      expect(logger.logger.warn).toHaveBeenCalled();
+    });
+
+    it('collapses duplicate vulnerability ids from osv and osv-offline', async () => {
+      config.vulnerabilityAlerts = [
+        { vulnerabilityType: 'osv-offline' },
+        {
+          vulnerabilityType: 'osv',
+          vulnerabilityHost: 'https://api.osv.dev',
+        },
+      ];
+      const vulnerability = {
+        id: 'GHSA-dup',
+        modified: '',
+        affected: [
+          {
+            package: { name: 'django', ecosystem: 'PyPI' },
+            ranges: [
+              {
+                type: 'ECOSYSTEM' as const,
+                events: [{ introduced: '0' }, { fixed: '3.2.16' }],
+              },
+            ],
+          },
+        ],
+      } satisfies Osv.Vulnerability;
+      getVulnerabilitiesMock.mockResolvedValueOnce([vulnerability]);
+      httpMock
+        .scope('https://api.osv.dev')
+        .post('/v1/query')
+        .reply(200, { vulns: [vulnerability] });
+
+      const found = await vulnerabilities.fetchVulnerabilities(config, {
+        poetry: [
+          {
+            deps: [
+              {
+                depName: 'django',
+                packageName: 'django',
+                currentValue: '3.2',
+                datasource: 'pypi',
+              },
+            ],
+            packageFile: 'some-file',
+          },
+        ],
+      });
+
+      expect(found.map((item) => item.vulnerability.id)).toEqual(['GHSA-dup']);
+    });
+
+    it('applies the matching osv entry PR fields as package rule force', async () => {
+      config.vulnerabilityAlerts = [
+        {
+          vulnerabilityType: 'dependabot',
+          labels: ['github'],
+        },
+        {
+          vulnerabilityType: 'osv',
+          vulnerabilityHost: 'https://api.osv.dev',
+          labels: ['from-osv'],
+        },
+      ];
+      httpMock
+        .scope('https://api.osv.dev')
+        .post('/v1/query')
+        .reply(200, {
+          vulns: [
+            {
+              id: 'PYSEC-force',
+              modified: '',
+              affected: [
+                {
+                  package: { name: 'django', ecosystem: 'PyPI' },
+                  ranges: [
+                    {
+                      type: 'ECOSYSTEM',
+                      events: [{ introduced: '0' }, { fixed: '3.2.16' }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        });
+
+      await vulnerabilities.appendVulnerabilityPackageRules(config, {
+        poetry: [
+          {
+            deps: [
+              {
+                depName: 'django',
+                packageName: 'django',
+                currentValue: '3.2',
+                datasource: 'pypi',
+              },
+            ],
+            packageFile: 'some-file',
+          },
+        ],
+      });
+
+      expect(config.packageRules?.[0]?.force).toEqual({ labels: ['from-osv'] });
+    });
+
+    it('uses empty force when vulnerabilityAlerts has no entries', async () => {
+      config.vulnerabilityAlerts = [];
+      getVulnerabilitiesMock.mockResolvedValueOnce([
+        {
+          id: 'GHSA-empty',
+          modified: '',
+          affected: [
+            {
+              package: { name: 'django', ecosystem: 'PyPI' },
+              ranges: [
+                {
+                  type: 'ECOSYSTEM',
+                  events: [{ introduced: '0' }, { fixed: '3.2.16' }],
+                },
+              ],
+            },
+          ],
+        },
+      ]);
+
+      await vulnerabilities.appendVulnerabilityPackageRules(config, {
+        poetry: [
+          {
+            deps: [
+              {
+                depName: 'django',
+                packageName: 'django',
+                currentValue: '3.2',
+                datasource: 'pypi',
+              },
+            ],
+            packageFile: 'some-file',
+          },
+        ],
+      });
+
+      expect(config.packageRules?.[0]?.force).toEqual({});
+    });
+
+    it('skips an osv entry that has no vulnerabilityHost', async () => {
+      config.vulnerabilityAlerts = [{ vulnerabilityType: 'osv' }];
+
+      const found = await vulnerabilities.fetchVulnerabilities(config, {
+        poetry: [
+          {
+            deps: [
+              {
+                depName: 'django',
+                packageName: 'django',
+                currentValue: '3.2',
+                datasource: 'pypi',
+              },
+            ],
+            packageFile: 'some-file',
+          },
+        ],
+      });
+
+      expect(found).toEqual([]);
     });
 
     it('return list of Vulnerabilities', async () => {

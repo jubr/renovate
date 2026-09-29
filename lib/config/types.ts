@@ -460,7 +460,7 @@ export interface RenovateConfig
   updateType?: UpdateType;
 
   warnings?: ValidationMessage[];
-  vulnerabilityAlerts?: RenovateSharedConfig;
+  vulnerabilityAlerts?: VulnerabilityAlertEntry[];
   osvVulnerabilityAlerts?: boolean;
   vulnerabilitySeverity?: string;
   customManagers?: CustomManager[];
@@ -616,6 +616,15 @@ export interface PackageRule
   sourceDirectory?: string;
   vulnerabilitySeverity?: string;
   vulnerabilityFixVersion?: string;
+}
+
+export type VulnerabilityAlertType = 'dependabot' | 'osv' | 'osv-offline';
+
+export interface VulnerabilityAlertEntry extends RenovateSharedConfig {
+  vulnerabilityType: VulnerabilityAlertType;
+  vulnerabilityHost?: string;
+  prConcurrentLimit?: number;
+  branchConcurrentLimit?: number | null;
 }
 
 export interface ValidationMessage {

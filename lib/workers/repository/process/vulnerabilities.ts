@@ -11,7 +11,11 @@ import type { CvssVector } from 'ae-cvss-calculator';
 import * as _aeCvss from 'ae-cvss-calculator';
 import { z } from 'zod/v4';
 import { getManagerConfig, mergeChildConfig } from '../../../config/index.ts';
-import type { PackageRule, RenovateConfig } from '../../../config/types.ts';
+import type {
+  PackageRule,
+  RenovateConfig,
+  VulnerabilityAlertEntry,
+} from '../../../config/types.ts';
 import { instrument } from '../../../instrumentation/index.ts';
 import { logger } from '../../../logger/index.ts';
 import { getDefaultVersioning } from '../../../modules/datasource/common.ts';
@@ -22,6 +26,7 @@ import type {
 import type { VersioningApi } from '../../../modules/versioning/index.ts';
 import { get as getVersioning } from '../../../modules/versioning/index.ts';
 import { coerceArray } from '../../../util/array.ts';
+import { Http } from '../../../util/http/index.ts';
 import { sanitizeMarkdown } from '../../../util/markdown.ts';
 import * as p from '../../../util/promises.ts';
 import { regEx } from '../../../util/regex.ts';
@@ -31,6 +36,10 @@ import {
   getFixedVersionConstraint,
   getLastAffectedVersionConstraint,
 } from '../../../util/vulnerability/utils.ts';
+import {
+  normalizeVulnerabilityAlertEntries,
+  vulnerabilityAlertPrFields,
+} from '../extract/vulnerability-alerts.ts';
 import type {
   DependencyVulnerabilities,
   SeverityDetails,
@@ -39,6 +48,92 @@ import type {
 
 const { fromVector } = (_aeCvss as unknown as { default: typeof _aeCvss })
   .default;
+
+const osvHttp = new Http('osv');
+
+async function queryOsvHost(
+  host: string,
+  ecosystem: string,
+  packageName: string,
+): Promise<Osv.Vulnerability[]> {
+  const base = host.replace(regEx(/\/$/), '');
+  const response = await osvHttp.postJson<{ vulns?: Osv.Vulnerability[] }>(
+    `${base}/v1/query`,
+    {
+      body: {
+        package: {
+          name: packageName,
+          ecosystem,
+        },
+      },
+    },
+  );
+  return coerceArray(response.body.vulns);
+}
+
+function dedupeVulnerabilities(
+  groups: {
+    vulns: Osv.Vulnerability[];
+    source?: VulnerabilityAlertEntry;
+  }[],
+): {
+  vulnerabilities: Osv.Vulnerability[];
+  sourceById: Map<string, VulnerabilityAlertEntry | undefined>;
+} {
+  const seen = new Set<string>();
+  const vulnerabilities: Osv.Vulnerability[] = [];
+  const sourceById = new Map<string, VulnerabilityAlertEntry | undefined>();
+  for (const group of groups) {
+    for (const vulnerability of group.vulns) {
+      if (seen.has(vulnerability.id)) {
+        continue;
+      }
+      seen.add(vulnerability.id);
+      sourceById.set(vulnerability.id, group.source);
+      vulnerabilities.push(vulnerability);
+    }
+  }
+  return { vulnerabilities, sourceById };
+}
+
+async function openOsvOffline(databaseUrl?: string): Promise<OsvOffline> {
+  const previousUrl = process.env.OSV_OFFLINE_DATABASE_URL;
+  if (databaseUrl) {
+    process.env.OSV_OFFLINE_DATABASE_URL = databaseUrl;
+  }
+  try {
+    // osv-offline 3.0.12 reads the zip URL from the environment inside create().
+    const create = OsvOffline.create;
+    return await create(databaseUrl);
+  } finally {
+    if (databaseUrl) {
+      if (previousUrl === undefined) {
+        delete process.env.OSV_OFFLINE_DATABASE_URL;
+      } else {
+        process.env.OSV_OFFLINE_DATABASE_URL = previousUrl;
+      }
+    }
+  }
+}
+
+function vulnerabilityAlertForce(
+  packageFileConfig: RenovateConfig,
+  alertEntry?: VulnerabilityAlertEntry,
+): RenovateConfig {
+  if (alertEntry) {
+    return vulnerabilityAlertPrFields(alertEntry);
+  }
+  const entries = normalizeVulnerabilityAlertEntries(
+    packageFileConfig.vulnerabilityAlerts,
+  );
+  const entry =
+    entries.find((item) => item.vulnerabilityType === 'dependabot') ??
+    entries[0];
+  if (!entry) {
+    return {};
+  }
+  return vulnerabilityAlertPrFields(entry);
+}
 
 export class Vulnerabilities {
   private static osvOffline: Promise<OsvOffline> | undefined;
@@ -51,15 +146,15 @@ export class Vulnerabilities {
     this.osvOffline = osvOffline;
   }
 
-  private static initialize(): Promise<OsvOffline> {
+  private static initialize(databaseUrl?: string): Promise<OsvOffline> {
     // no async here, so osv promise will only be created once
-    Vulnerabilities.osvOffline ??= OsvOffline.create();
+    Vulnerabilities.osvOffline ??= openOsvOffline(databaseUrl);
     return Vulnerabilities.osvOffline;
   }
 
-  static async create(): Promise<Vulnerabilities> {
+  static async create(databaseUrl?: string): Promise<Vulnerabilities> {
     // intialize osv only once
-    const osvOffline = await Vulnerabilities.initialize();
+    const osvOffline = await Vulnerabilities.initialize(databaseUrl);
 
     const instance = new Vulnerabilities(osvOffline);
     return instance;
@@ -159,6 +254,69 @@ export class Vulnerabilities {
     return result.filter(isTruthy);
   }
 
+  private async collectOsvVulnerabilities(
+    packageFileConfig: RenovateConfig,
+    ecosystem: Ecosystem,
+    osvPackageName: string,
+  ): Promise<{
+    vulnerabilities: Osv.Vulnerability[];
+    sourceById: Map<string, VulnerabilityAlertEntry | undefined>;
+  }> {
+    const entries = normalizeVulnerabilityAlertEntries(
+      packageFileConfig.vulnerabilityAlerts,
+    ).filter((entry) => entry.enabled !== false);
+    const osvEntries = entries.filter(
+      (entry) => entry.vulnerabilityType === 'osv',
+    );
+    const offlineEntries = entries.filter(
+      (entry) => entry.vulnerabilityType === 'osv-offline',
+    );
+    const groups: {
+      vulns: Osv.Vulnerability[];
+      source?: VulnerabilityAlertEntry;
+    }[] = [];
+
+    if (offlineEntries.length > 0 || osvEntries.length === 0) {
+      const offline = await instrument(
+        'get OSV vulnerabilities',
+        () => this.osvOffline.getVulnerabilities(ecosystem, osvPackageName),
+        {
+          attributes: {
+            osvPackageName,
+            ecosystem,
+          },
+        },
+      );
+      groups.push({
+        vulns: coerceArray(offline),
+        source: offlineEntries[0],
+      });
+    }
+
+    for (const entry of osvEntries) {
+      if (!isNonEmptyString(entry.vulnerabilityHost)) {
+        continue;
+      }
+      try {
+        groups.push({
+          vulns: await queryOsvHost(
+            entry.vulnerabilityHost,
+            ecosystem,
+            osvPackageName,
+          ),
+          source: entry,
+        });
+      } catch (err) {
+        logger.warn(
+          { err, vulnerabilityHost: entry.vulnerabilityHost },
+          'OSV query failed',
+        );
+      }
+    }
+
+    return dedupeVulnerabilities(groups);
+  }
+
   private async fetchDependencyVulnerability(
     packageFileConfig: RenovateConfig & PackageFile,
     dep: PackageDependency,
@@ -187,16 +345,12 @@ export class Vulnerabilities {
     }
 
     try {
-      const osvVulnerabilities = await instrument(
-        'get OSV vulnerabilities',
-        () => this.osvOffline.getVulnerabilities(ecosystem, osvPackageName),
-        {
-          attributes: {
-            osvPackageName,
-            ecosystem,
-          },
-        },
-      );
+      const { vulnerabilities: osvVulnerabilities, sourceById } =
+        await this.collectOsvVulnerabilities(
+          packageFileConfig,
+          ecosystem,
+          osvPackageName,
+        );
       if (
         isNullOrUndefined(osvVulnerabilities) ||
         isEmptyArray(osvVulnerabilities)
@@ -272,6 +426,7 @@ export class Vulnerabilities {
             fixedVersion,
             datasource: dep.datasource!,
             packageFileConfig,
+            alertEntry: sourceById.get(osvVulnerability.id),
           });
         }
       }
@@ -614,9 +769,7 @@ export class Vulnerabilities {
       isVulnerabilityAlert: true,
       vulnerabilitySeverity: severityDetails.severityLevel,
       prBodyNotes: this.generatePrBodyNotes(vulnerability, affected),
-      force: {
-        ...packageFileConfig.vulnerabilityAlerts,
-      },
+      force: vulnerabilityAlertForce(packageFileConfig, vul.alertEntry),
     };
   }
 
