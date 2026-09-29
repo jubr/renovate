@@ -1613,7 +1613,7 @@ You can choose from:
 
 You will only get OSV-based vulnerability alerts for direct dependencies.
 
-This feature is independent of the `osvVulnerabilityAlerts` option.
+This feature is independent of whether a [`vulnerabilityAlerts`](#vulnerabilityalerts) entry uses `vulnerabilityType` `osv` or `osv-offline`.
 
 The source of these CVEs is [OSV.dev](https://osv.dev/).
 
@@ -3076,6 +3076,11 @@ If configured to `true`, it means that any `.npmrc` file in the repo will have `
 
 ## `osvVulnerabilityAlerts`
 
+Deprecated.
+Use a [`vulnerabilityAlerts`](#vulnerabilityalerts) entry with `vulnerabilityType` set to `osv-offline` instead.
+`osv-offline` is preferred over `osv` because the local database is faster than a query per package.
+`osvVulnerabilityAlerts: true` still enables that `osv-offline` source.
+
 Renovate integrates with [OSV](https://osv.dev/), an Open Source vulnerability database, to check if extracted dependencies have known vulnerabilities.
 Set `osvVulnerabilityAlerts` to `true` to get pull requests with vulnerability fixes (once they are available).
 
@@ -3094,13 +3099,14 @@ Renovate only queries the OSV database for dependencies that use one of these da
 - [`rubygems`](./modules/datasource/rubygems/index.md)
 
 The entire database is downloaded locally by [osv-offline](https://github.com/renovatebot/osv-offline) and queried offline.
+The same database is what a `vulnerabilityAlerts` entry with `vulnerabilityType: osv-offline` uses.
 
 <!-- markdownlint-disable MD001 -->
 
 #### Malicious package detection and protection
 
 !!! note
-  This functionality is currently experimental, being actively worked on, and will soon be available for usage outside of `osvVulnerabilityAlerts`.
+  This functionality is currently experimental, being actively worked on, and will soon be available for usage outside of `osvVulnerabilityAlerts` and `vulnerabilityType: osv-offline`.
 
 If Renovate detects a malicious dependency using data from OSV, it will surface this in log warnings, and prevent PRs from being created.
 
@@ -5303,7 +5309,12 @@ When using this strategy, make sure that the package you're referencing does sup
 
 ## `vulnerabilityAlerts`
 
-Renovate can read GitHub's Vulnerability Alerts to customize its Pull Requests.
+`vulnerabilityAlerts` is an array of sources.
+Each object chooses a `vulnerabilityType` and can carry the same Pull Request settings this option used to hold as a single object.
+The old object form still works and is read as one `dependabot` entry.
+An empty array turns every source off.
+
+`vulnerabilityType: dependabot` reads GitHub [Dependabot alerts](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/enabling-the-dependency-graph).
 For this to work, you must enable the [Dependency graph](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/enabling-the-dependency-graph), and [Dependabot alerts](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-security-and-analysis-settings-for-your-repository).
 Follow these steps:
 
@@ -5317,15 +5328,19 @@ Follow these steps:
 
 Once the above conditions are met, and you got one or more vulnerability alerts from GitHub for this repository, then Renovate tries to raise fix PRs.
 
-You may use the `vulnerabilityAlerts` configuration object to customize vulnerability-fix PRs.
+You may use a `vulnerabilityAlerts` entry to customize vulnerability-fix PRs.
+Those fields apply only to the source they sit on.
 
 ```json title="Setting a custom label and assignee"
 {
-  "vulnerabilityAlerts": {
-    "labels": ["security"],
-    "automerge": true,
-    "assignees": ["@renovate-tests"]
-  }
+  "vulnerabilityAlerts": [
+    {
+      "vulnerabilityType": "dependabot",
+      "labels": ["security"],
+      "automerge": true,
+      "assignees": ["@renovate-tests"]
+    }
+  ]
 }
 ```
 
@@ -5338,15 +5353,19 @@ You may use the `vulnerabilityAlerts` configuration object to customize vulnerab
   This means that Renovate _always_ tries to create a `vulnerabilityAlerts` PR.
   In short: vulnerability alerts "skip the line".
 
-If you get many alerts at once, for example when you onboard a repository which was not using Renovate before, then set `prConcurrentLimit` or `branchConcurrentLimit` inside the `vulnerabilityAlerts` object.
+If you get many alerts at once, for example when you onboard a repository which was not using Renovate before, then set `prConcurrentLimit` or `branchConcurrentLimit` inside a `vulnerabilityAlerts` entry.
+Renovate reads `prConcurrentLimit` from the `dependabot` entry, otherwise from the first entry that sets it, otherwise `0`.
 Vulnerability fixes get their _own_ budget, they do not take a share of the repository-wide one:
 
 ```json title="Allowing up to 5 vulnerability fix PRs on top of 5 regular PRs"
 {
   "prConcurrentLimit": 5,
-  "vulnerabilityAlerts": {
-    "prConcurrentLimit": 5
-  }
+  "vulnerabilityAlerts": [
+    {
+      "vulnerabilityType": "dependabot",
+      "prConcurrentLimit": 5
+    }
+  ]
 }
 ```
 
@@ -5358,13 +5377,43 @@ You do not need to set `branchConcurrentLimit` as well, because its `null` defau
   Only the concurrent limits can be set this way.
   Renovate always ignores `commitHourlyLimit`, `prHourlyLimit`, `prCommitsPerRunLimit` and `schedule` for vulnerability alerts, you can not override this.
 
-To disable the vulnerability alerts feature, set `enabled=false` in a `vulnerabilityAlerts` config object, like this:
+`enabled: false` skips that entry only.
+To disable GitHub Dependabot alerts, set it on the `dependabot` entry:
 
-```json title="Disabling vulnerability alerts"
+```json title="Disabling Dependabot alerts"
 {
-  "vulnerabilityAlerts": {
-    "enabled": false
-  }
+  "vulnerabilityAlerts": [
+    {
+      "vulnerabilityType": "dependabot",
+      "enabled": false
+    }
+  ]
+}
+```
+
+An extensive example:
+
+```json title="OSV offline plus a custom query host"
+{
+  "vulnerabilityAlerts": [
+    {
+      "vulnerabilityType": "dependabot",
+      "labels": ["security"],
+      "vulnerabilityFixStrategy": "lowest",
+      "prConcurrentLimit": 0
+    },
+    { "vulnerabilityType": "osv-offline" },
+    {
+      "vulnerabilityType": "osv",
+      "vulnerabilityHost": "https://osv.custom.com"
+    }
+  ],
+  "hostRules": [
+    {
+      "matchHost": "https://osv.custom.com",
+      "headers": { "x-abc": "token" }
+    }
+  ]
 }
 ```
 
@@ -5380,8 +5429,53 @@ If `vulnerabilityFixStrategy=highest` is configured then Renovate will use its n
 
 ```json title="Setting vulnerabilityFixStrategy to highest"
 {
-  "vulnerabilityAlerts": {
-    "vulnerabilityFixStrategy": "highest"
-  }
+  "vulnerabilityAlerts": [
+    {
+      "vulnerabilityType": "dependabot",
+      "vulnerabilityFixStrategy": "highest"
+    }
+  ]
 }
 ```
+
+### `vulnerabilityAlerts.vulnerabilityHost`
+
+For `vulnerabilityType: osv-offline`, setting `vulnerabilityHost` passes `OSV_OFFLINE_DATABASE_URL` to osv-ofline. is the `OSV_OFFLINE_DATABASE_URL` environment variable when that is set, and otherwise the [osv-offline release zip](https://github.com/renovatebot/osv-offline/releases/latest/download/osv-offline.zip).
+An explicit `vulnerabilityHost` on the entry replaces that URL.
+
+For `vulnerabilityType: osv`, `vulnerabilityHost` is the query API base URL.
+The default if unset is [https://api.osv.dev](https://api.osv.dev) and described at [POST /v1/query](https://google.github.io/osv.dev/api/#tag/api/operation/OSV_QueryAffected).
+Credentials for private or paid OSV providers can be set in `[hostRules](#hostrules)`, using `[headers](#hostrulesheaders)` or `[authType](#hostrulesauthtype)` `Bearer` plus `token`.
+Requests go through Renovate's HTTP client, so those rules apply:
+
+```json title="Custom OSV query host"
+{
+  "vulnerabilityAlerts": [
+    {
+      "vulnerabilityType": "osv",
+      "vulnerabilityHost": "https://osv.custom.com"
+    }
+  ],
+  "hostRules": [
+    {
+      "matchHost": "https://osv.custom.com",
+      "headers": { "x-abc": "token" }
+    }
+  ]
+}
+```
+
+The environment variables `OSV_OFFLINE_DATABASE_URL` and `OSV_OFFLINE_DISABLE_DOWNLOAD` control runtime behavior.
+Set them when you start Renovate.
+`OSV_OFFLINE_DISABLE_DOWNLOAD=true` makes [osv-offline](https://github.com/renovatebot/osv-offline) skip the zip download ([download.ts](https://github.com/renovatebot/osv-offline/blob/main/packages/osv-offline/src/lib/download.ts)).
+Renovate does not set `OSV_OFFLINE_DISABLE_DOWNLOAD`.
+
+### `vulnerabilityAlerts.vulnerabilityType`
+
+- `dependabot` reads GitHub Dependabot alerts
+- `osv` sends one HTTP query per package to `{vulnerabilityHost}/v1/query`
+- `osv-offline` queries the local [osv-offline](https://github.com/renovatebot/osv-offline) database
+
+Generally, prefer `osv-offline` over `osv` with [https://api.osv.dev](https://api.osv.dev).
+The tradeoff is an initial ~75 MB file download with then instantaneous local lookups.
+On larger codebases online `osv` will become slower quickly because each package is a separate HTTP request.

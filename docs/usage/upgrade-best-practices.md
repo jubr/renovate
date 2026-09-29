@@ -179,10 +179,11 @@ If your project is this badly behind on updates, you have two problems:
 Fix the easier problem first: getting back up to date.
 Update any dependencies that have critical updates for CVEs or other security related improvements.
 
-If you're on the GitHub platform: follow the steps listed in the [`vulnerabilityAlerts`](./configuration-options.md#vulnerabilityalerts) docs to make sure Renovate is reading GitHub's Vulnerability Alerts.
+If you're on the GitHub platform: follow the steps listed in the [`vulnerabilityAlerts`](./configuration-options.md#vulnerabilityalerts) docs to make sure Renovate is reading GitHub's [Dependabot alerts](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/enabling-the-dependency-graph).
 
-You may want to enable the experimental `osvVulnerabilityAlerts` config option, to get OSV-based vulnerability alerts for _direct_ dependencies.
-Read the [`osvVulnerabilityAlerts` config option docs](./configuration-options.md#osvvulnerabilityalerts) to learn more.
+For other ecosystems, add a [`vulnerabilityAlerts`](./configuration-options.md#vulnerabilityalerts) entry with `vulnerabilityType` set to `osv-offline`.
+That uses the local [osv-offline](https://github.com/renovatebot/osv-offline) database, which is faster than querying [osv.dev](https://osv.dev/) once per package.
+The deprecated [`osvVulnerabilityAlerts`](./configuration-options.md#osvvulnerabilityalerts) flag still enables that same `osv-offline` source.
 
 ### Fix blocking updates
 
