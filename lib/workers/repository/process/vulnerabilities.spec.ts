@@ -3011,6 +3011,52 @@ describe('workers/repository/process/vulnerabilities', () => {
       ]);
     });
 
+    it('accepts string severity ratings on OSV records', async () => {
+      const packageFiles: Record<string, PackageFile[]> = {
+        npm: [
+          {
+            deps: [
+              {
+                depName: 'lodash',
+                packageName: 'lodash',
+                currentValue: '4.17.10',
+                datasource: 'npm',
+              },
+            ],
+            packageFile: 'some-file',
+          },
+        ],
+      };
+
+      getVulnerabilitiesMock.mockResolvedValueOnce([
+        {
+          ...lodashVulnerability,
+          id: 'PRECVE-2026-34220',
+          // PRECVE returns a severity label, not an OSV severity array
+          severity: 'high' as unknown as Osv.Severity[],
+        },
+      ]);
+
+      await vulnerabilities.appendVulnerabilityPackageRules(
+        config,
+        packageFiles,
+      );
+
+      expect(config.packageRules).toMatchObject([
+        {
+          matchDatasources: ['npm'],
+          matchPackageNames: ['lodash'],
+          matchCurrentVersion: '4.17.10',
+          allowedVersions: '>= 4.17.11',
+          isVulnerabilityAlert: true,
+          vulnerabilitySeverity: 'HIGH',
+        },
+      ]);
+      expect(config.packageRules?.[0]?.prBodyNotes?.[0]).toContain(
+        '#### Severity\nHigh',
+      );
+    });
+
     it('formats headings of vulnerability details', async () => {
       const packageFiles: Record<string, PackageFile[]> = {
         regex: [

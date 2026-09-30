@@ -870,9 +870,15 @@ export class Vulnerabilities {
     let severityLevel = 'UNKNOWN';
     let score = 'Unknown';
 
+    // OSV schema uses an array. Some hosts (PRECVE) send a label string instead.
+    const rawSeverity: unknown = vulnerability.severity;
+    const severityEntries: Osv.Severity[] = Array.isArray(rawSeverity)
+      ? rawSeverity
+      : [];
+
     const cvssVector =
-      vulnerability.severity?.find((e) => e.type === 'CVSS_V4')?.score ??
-      vulnerability.severity?.find((e) => e.type === 'CVSS_V3')?.score ??
+      severityEntries.find((e) => e.type === 'CVSS_V4')?.score ??
+      severityEntries.find((e) => e.type === 'CVSS_V3')?.score ??
       (affected.database_specific?.cvss as string); // RUSTSEC
 
     if (cvssVector) {
@@ -888,6 +894,8 @@ export class Vulnerabilities {
     ) {
       const severity = vulnerability.database_specific.severity as string;
       severityLevel = severity.toUpperCase();
+    } else if (isNonEmptyString(rawSeverity)) {
+      severityLevel = rawSeverity.toUpperCase();
     }
 
     return {
