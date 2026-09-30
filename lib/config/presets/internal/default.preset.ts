@@ -204,9 +204,12 @@ export const presets: Record<string, Preset> = {
   },
   disableVulnerabilityAlerts: {
     description: 'Disable vulnerability alerts completely.',
-    vulnerabilityAlerts: {
-      enabled: false,
-    },
+    vulnerabilityAlerts: [
+      {
+        enabled: false,
+        vulnerabilityType: 'dependabot',
+      },
+    ],
   },
   docker: {
     description: 'Keep Dockerfile `FROM` sources updated.',
@@ -238,25 +241,34 @@ export const presets: Record<string, Preset> = {
   },
   enableVulnerabilityAlerts: {
     description: 'Raise PR when vulnerability alerts are detected.',
-    vulnerabilityAlerts: {
-      enabled: true,
-    },
+    vulnerabilityAlerts: [
+      {
+        enabled: true,
+        vulnerabilityType: 'dependabot',
+      },
+    ],
   },
   enableVulnerabilityAlertsWithAdditionalLabel: {
     description:
       'Raise PR when vulnerability alerts are detected with label `{{arg0}}`, in addition to any existing list of PR labels.',
-    vulnerabilityAlerts: {
-      addLabels: ['{{arg0}}'],
-      enabled: true,
-    },
+    vulnerabilityAlerts: [
+      {
+        addLabels: ['{{arg0}}'],
+        enabled: true,
+        vulnerabilityType: 'dependabot',
+      },
+    ],
   },
   enableVulnerabilityAlertsWithLabel: {
     description:
       'Raise PR when vulnerability alerts are detected with label `{{arg0}}`, replacing any existing list of PR labels.',
-    vulnerabilityAlerts: {
-      enabled: true,
-      labels: ['{{arg0}}'],
-    },
+    vulnerabilityAlerts: [
+      {
+        enabled: true,
+        labels: ['{{arg0}}'],
+        vulnerabilityType: 'dependabot',
+      },
+    ],
   },
   followTag: {
     description:

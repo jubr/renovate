@@ -143,16 +143,19 @@ export const presets: Record<string, Preset> = {
     description:
       'Only update dependencies if vulnerabilities have been detected.',
     extends: ['config:recommended'],
-    osvVulnerabilityAlerts: true,
     packageRules: [
       {
         enabled: false,
         matchPackageNames: ['*'],
       },
     ],
-    vulnerabilityAlerts: {
-      enabled: true,
-    },
+    vulnerabilityAlerts: [
+      {
+        enabled: true,
+        vulnerabilityType: 'dependabot',
+      },
+      { vulnerabilityType: 'osv-offline' },
+    ],
   },
   'openssf-scorecard': {
     description: 'Show OpenSSF badge on pull requests.',

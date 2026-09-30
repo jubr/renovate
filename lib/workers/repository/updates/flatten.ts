@@ -17,6 +17,10 @@ import * as template from '../../../util/template/index.ts';
 import { parseUrl } from '../../../util/url.ts';
 import type { BranchUpgradeConfig } from '../../types.ts';
 import { replacementAlreadyExists } from '../common.ts';
+import {
+  normalizeVulnerabilityAlertEntries,
+  vulnerabilityAlertPrFields,
+} from '../extract/vulnerability-alerts.ts';
 import { generateBranchName } from './branch-name.ts';
 
 function upper(str: string): string {
@@ -220,10 +224,15 @@ export async function flattenUpdates(
                 packageFileConfig,
                 remediation,
               );
-              updateConfig = mergeChildConfig(
-                updateConfig,
+              const dependabotAlert = normalizeVulnerabilityAlertEntries(
                 config.vulnerabilityAlerts,
-              );
+              ).find((entry) => entry.vulnerabilityType === 'dependabot');
+              if (dependabotAlert) {
+                updateConfig = mergeChildConfig(
+                  updateConfig,
+                  vulnerabilityAlertPrFields(dependabotAlert),
+                );
+              }
               delete updateConfig.vulnerabilityAlerts;
               updateConfig.isVulnerabilityAlert = true;
               updateConfig.isRemediation = true;

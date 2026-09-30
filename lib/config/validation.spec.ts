@@ -65,9 +65,12 @@ describe('config/validation', () => {
 
     it('allow enabled field in vulnerabilityAlerts', async () => {
       const config = {
-        vulnerabilityAlerts: {
-          enabled: false,
-        },
+        vulnerabilityAlerts: [
+          {
+            vulnerabilityType: 'dependabot' as const,
+            enabled: false,
+          },
+        ],
       };
       const { errors, warnings } = await configValidation.validateConfig(
         'repo',

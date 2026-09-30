@@ -5,7 +5,7 @@ import { logger } from '../../../logger/index.ts';
 import { hashMap } from '../../../modules/manager/index.ts';
 import type { PackageFile } from '../../../modules/manager/types.ts';
 import { scm } from '../../../modules/platform/scm.ts';
-import { isNotNullOrUndefined } from '../../../util/array.ts';
+import { coerceArray, isNotNullOrUndefined } from '../../../util/array.ts';
 import * as memCache from '../../../util/cache/memory/index.ts';
 import { getCache } from '../../../util/cache/repository/index.ts';
 import type { BaseBranchCache } from '../../../util/cache/repository/types.ts';
@@ -14,6 +14,7 @@ import { fingerprint } from '../../../util/fingerprint.ts';
 import type { BranchConfig } from '../../types.ts';
 import { generateFingerprintConfig } from '../extract/extract-fingerprint-config.ts';
 import { extractAllDependencies } from '../extract/index.ts';
+import { normalizeVulnerabilityAlerts } from '../extract/vulnerability-alerts.ts';
 import { branchifyUpgrades } from '../updates/branchify.ts';
 import { fetchUpdates } from './fetch.ts';
 import { calculateLibYears } from './libyear.ts';
@@ -211,17 +212,30 @@ async function fetchVulnerabilities(
   config: RenovateConfig,
   packageFiles: Record<string, PackageFile[]>,
 ): Promise<void> {
-  if (config.osvVulnerabilityAlerts) {
-    logger.debug('fetchVulnerabilities() - osvVulnerabilityAlerts=true');
-    try {
-      const vulnerabilities = await Vulnerabilities.create();
-      await vulnerabilities.appendVulnerabilityPackageRules(
-        config,
-        packageFiles,
-      );
-    } catch (err) {
-      logger.warn({ err }, 'Unable to read vulnerability information');
-    }
+  const normalized = normalizeVulnerabilityAlerts(config);
+  if (normalized.vulnerabilityAlerts) {
+    config.vulnerabilityAlerts = normalized.vulnerabilityAlerts;
+  }
+  const osvEntries = coerceArray(config.vulnerabilityAlerts).filter(
+    (entry) =>
+      entry.enabled !== false &&
+      (entry.vulnerabilityType === 'osv' ||
+        entry.vulnerabilityType === 'osv-offline'),
+  );
+  if (!osvEntries.length) {
+    return;
+  }
+  logger.debug('fetchVulnerabilities() - osv vulnerability entry enabled');
+  const offline = osvEntries.find(
+    (entry) => entry.vulnerabilityType === 'osv-offline',
+  );
+  try {
+    const vulnerabilities = await Vulnerabilities.create(
+      offline?.vulnerabilityHost,
+    );
+    await vulnerabilities.appendVulnerabilityPackageRules(config, packageFiles);
+  } catch (err) {
+    logger.warn({ err }, 'Unable to read vulnerability information');
   }
 }
 

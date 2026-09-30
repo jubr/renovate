@@ -12,6 +12,7 @@ import { coerceNumber } from '../../../../util/number.ts';
 import { regEx } from '../../../../util/regex.ts';
 import { calcLimit } from '../../../global/limits.ts';
 import type { BranchConfig, BranchUpgradeConfig } from '../../../types.ts';
+import { normalizeVulnerabilityAlertEntries } from '../../extract/vulnerability-alerts.ts';
 
 /**
  * The different categories of dependency updates to output, when providing the summary view.
@@ -81,23 +82,37 @@ function resolveConcurrentLimit(config: RenovateConfig): ConcurrentLimit {
 function resolveVulnerabilityConcurrentLimit(
   config: RenovateConfig,
 ): ConcurrentLimit {
-  // `vulnerabilityAlerts` is typed as `RenovateSharedConfig`, which doesn't declare `prConcurrentLimit`/
-  // `branchConcurrentLimit`, even though both are valid nested options (see docs for `vulnerabilityAlerts`).
-  // oxlint-disable-next-line typescript/no-unnecessary-type-assertion
-  const vulnerabilityAlerts = config.vulnerabilityAlerts as
-    RenovateConfig | undefined;
-  const vulnerabilityAlertsDefault = getDefault(
-    getOptions().find((option) => option.name === 'vulnerabilityAlerts')!,
-  ) as RenovateConfig;
+  const entries = normalizeVulnerabilityAlertEntries(
+    config.vulnerabilityAlerts,
+  );
+  const dependabot = entries.find(
+    (entry) => entry.vulnerabilityType === 'dependabot',
+  );
+  const prSource =
+    dependabot?.prConcurrentLimit === undefined
+      ? entries.find((entry) => entry.prConcurrentLimit !== undefined)
+      : dependabot;
+  const branchSource =
+    typeof dependabot?.branchConcurrentLimit === 'number'
+      ? dependabot
+      : entries.find(
+          (entry) => typeof entry.branchConcurrentLimit === 'number',
+        );
+  const vulnerabilityAlertsDefault = normalizeVulnerabilityAlertEntries(
+    getDefault(
+      getOptions().find((option) => option.name === 'vulnerabilityAlerts')!,
+    ),
+  ).find((entry) => entry.vulnerabilityType === 'dependabot');
   const configAsUpgrade: BranchUpgradeConfig = {
     branchName: '',
     manager: '',
     prConcurrentLimit:
-      vulnerabilityAlerts?.prConcurrentLimit ??
-      vulnerabilityAlertsDefault.prConcurrentLimit,
+      prSource?.prConcurrentLimit ??
+      vulnerabilityAlertsDefault?.prConcurrentLimit ??
+      0,
     // `undefined` and `null` are handled identically by `calcLimit()` (both inherit `prConcurrentLimit`),
     // so there's no default value to duplicate here - unlike `prConcurrentLimit` above.
-    branchConcurrentLimit: vulnerabilityAlerts?.branchConcurrentLimit,
+    branchConcurrentLimit: branchSource?.branchConcurrentLimit,
   };
   const prConcurrentLimit = calcLimit([configAsUpgrade], 'prConcurrentLimit');
   const branchConcurrentLimit = calcLimit(
@@ -106,7 +121,7 @@ function resolveVulnerabilityConcurrentLimit(
   );
 
   if (
-    typeof vulnerabilityAlerts?.branchConcurrentLimit === 'number' &&
+    typeof branchSource?.branchConcurrentLimit === 'number' &&
     branchConcurrentLimit > 0 &&
     (prConcurrentLimit === 0 || branchConcurrentLimit < prConcurrentLimit)
   ) {

@@ -2428,24 +2428,46 @@ const options: Readonly<RenovateOptions>[] = [
   {
     name: 'vulnerabilityAlerts',
     description:
-      'Config to apply when a PR is needed due to a vulnerability in the existing package version.',
-    type: 'object',
-    default: {
-      groupName: null,
-      schedule: [],
-      dependencyDashboardApproval: false,
-      minimumReleaseAge: null,
-      rangeStrategy: 'update-lockfile',
-      commitMessageSuffix: '[SECURITY]',
-      branchTopic: `{{{datasource}}}-{{{depNameSanitized}}}-vulnerability`,
-      prCreation: 'immediate',
-      vulnerabilityFixStrategy: 'lowest',
-      prConcurrentLimit: 0,
-    },
+      'Sources of vulnerability data and config to apply when a PR is needed due to a vulnerability in the existing package version.',
+    type: 'array',
+    subType: 'object',
+    default: [
+      {
+        vulnerabilityType: 'dependabot',
+        groupName: null,
+        schedule: [],
+        dependencyDashboardApproval: false,
+        minimumReleaseAge: null,
+        rangeStrategy: 'update-lockfile',
+        commitMessageSuffix: '[SECURITY]',
+        branchTopic: `{{{datasource}}}-{{{depNameSanitized}}}-vulnerability`,
+        prCreation: 'immediate',
+        vulnerabilityFixStrategy: 'lowest',
+        prConcurrentLimit: 0,
+      },
+    ],
     mergeable: true,
     cli: false,
     env: false,
-    supportedPlatforms: ['github'],
+  },
+  {
+    name: 'vulnerabilityType',
+    description:
+      'Where vulnerability data for this `vulnerabilityAlerts` entry comes from. `osv-offline` is preferred over `osv` because the local database is faster than a query per package.',
+    type: 'string',
+    allowedValues: ['dependabot', 'osv', 'osv-offline'], // TBI: "gitlab"
+    parents: ['vulnerabilityAlerts'],
+    cli: false,
+    env: false,
+  },
+  {
+    name: 'vulnerabilityHost',
+    description:
+      'For `osv-offline`, the zip database URL. For `osv`, the query API base URL.',
+    type: 'string',
+    parents: ['vulnerabilityAlerts'],
+    cli: false,
+    env: false,
   },
   {
     name: 'vulnerabilityFixStrategy',
@@ -2458,11 +2480,14 @@ const options: Readonly<RenovateOptions>[] = [
   },
   {
     name: 'osvVulnerabilityAlerts',
-    description: 'Use vulnerability alerts from `osv.dev`.',
+    description:
+      'Use vulnerability alerts from `osv.dev`. Deprecated in favor of a `vulnerabilityAlerts` entry with `vulnerabilityType` set to `osv-offline`.',
     type: 'boolean',
     default: false,
     experimental: true,
     experimentalIssues: [20542],
+    deprecationMsg:
+      'Use a `vulnerabilityAlerts` entry with `vulnerabilityType` set to `osv-offline` instead. `osv-offline` is preferred over `osv` because the local database is faster than a query per package.',
   },
   {
     name: 'pruneBranchAfterAutomerge',

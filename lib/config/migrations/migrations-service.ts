@@ -32,6 +32,7 @@ import { MatchDatasourcesMigration } from './custom/match-datasources-migration.
 import { MatchManagersMigration } from './custom/match-managers-migration.ts';
 import { MatchStringsMigration } from './custom/match-strings-migration.ts';
 import { NodeMigration } from './custom/node-migration.ts';
+import { OsvVulnerabilityAlertsMigration } from './custom/osv-vulnerability-alerts-migration.ts';
 import { PackageFilesMigration } from './custom/package-files-migration.ts';
 import { PackageNameMigration } from './custom/package-name-migration.ts';
 import { PackagePatternMigration } from './custom/package-pattern-migration.ts';
@@ -59,6 +60,7 @@ import { UnpublishSafeMigration } from './custom/unpublish-safe-migration.ts';
 import { UpdateLockFilesMigration } from './custom/update-lock-files-migration.ts';
 import { UpgradeInRangeMigration } from './custom/upgrade-in-range-migration.ts';
 import { VersionStrategyMigration } from './custom/version-strategy-migration.ts';
+import { VulnerabilityAlertsMigration } from './custom/vulnerability-alerts-migration.ts';
 import type {
   MigratableConfig,
   Migration,
@@ -173,6 +175,8 @@ export class MigrationsService {
     PlatformCommitMigration,
     FileMatchMigration,
     UpdateLockFilesMigration,
+    VulnerabilityAlertsMigration,
+    OsvVulnerabilityAlertsMigration,
   ];
 
   static run(
